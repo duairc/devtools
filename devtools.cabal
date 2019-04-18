@@ -21,12 +21,14 @@ library
     src
 
   exposed-modules:
-    DevTools.API
     DevTools.Client
     DevTools.Event
     DevTools.Method
     DevTools.Pipe
     DevTools.Server
+
+  other-modules:
+    DevTools.Reply
 
   build-depends:
     aeson,
@@ -34,6 +36,7 @@ library
     base,
     bytestring,
     deepseq,
+    layers,
     hashable,
     resource,
     stm,
