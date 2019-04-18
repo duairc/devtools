@@ -11,14 +11,15 @@ where
 import           Control.Applicative (empty)
 import           Control.Concurrent (forkIO, killThread, threadDelay)
 import           Control.Exception (handleJust)
-import           Control.Monad (forever)
+import           Control.Monad ((>=>), forever, unless, when)
+import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.IORef (newIORef)
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           GHC.IO.Exception (ioe_type, IOErrorType (InvalidArgument))
 import           Prelude hiding (null, read)
-import           System.IO (Handle, hClose, hFlush)
+import           System.IO (Handle, hClose, hFlush, stderr)
 import           System.IO.Unsafe (unsafeInterleaveIO)
 
 
@@ -70,6 +71,7 @@ import           System.Posix.Types (Fd, ProcessID)
 data Pipe = Pipe
     { input :: !Handle
     , output :: !Handle
+    , debug :: !Bool
     }
   deriving (Eq, Show, Generic, Typeable)
 
@@ -123,21 +125,21 @@ fork run = resource (forkProcess run) wait
 
 
 ------------------------------------------------------------------------------
-chrome :: Resource IO Pipe
-chrome = do
+chrome :: Bool -> Resource IO Pipe
+chrome debug = do
     null <- drain
     (uin, din) <- pair
     (dout, uout) <- pair
     _pid <- fork $ go null uin uout
     input <- resource (fdToHandle din) hClose
     output <- resource (fdToHandle dout) hClose
-    pure $ Pipe input output
+    pure $ Pipe input output debug
   where
     go null uin uout = do
         _pgid <- getProcessID >>= createProcessGroupFor
         void $ dupTo null 0
         void $ dupTo null 1
-        void $ dupTo null 2
+        unless debug $ void $ dupTo null 2
         void $ dupTo uin 3
         void $ dupTo uout 4
         executeFile "chromium" True args Nothing
@@ -176,7 +178,11 @@ chrome = do
 
 ------------------------------------------------------------------------------
 read :: Pipe -> IO [ByteString]
-read (Pipe _ output) = split . L.fromChunks <$> go
+read (Pipe _ output debug) = do
+    chunks <- split . L.fromChunks <$> go
+    when debug $ for_ chunks $ \chunk ->
+        L.hPutStr stderr $ "< " <> chunk <> "\n"
+    pure chunks
   where
     split bytes
         | L.null bytes = []
@@ -201,7 +207,8 @@ read (Pipe _ output) = split . L.fromChunks <$> go
 
 ------------------------------------------------------------------------------
 write :: Pipe -> Builder -> IO ()
-write (Pipe input _) builder = do
+write (Pipe input _ debug) builder = do
+    when debug $ hPutBuilder stderr $ "> " <> builder <> "\n"
     hPutBuilder input $ builder <> word8 0
     hFlush input
 
@@ -221,5 +228,5 @@ serve _pipe = do
 
 
 ------------------------------------------------------------------------------
-pipe :: Resource IO Server
-pipe = chrome >>= serve
+pipe :: Bool -> Resource IO Server
+pipe = chrome >=> serve
